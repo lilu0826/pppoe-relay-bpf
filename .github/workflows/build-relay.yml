@@ -19,8 +19,12 @@ jobs:
           SDK_URL="https://downloads.openwrt.org/releases/24.10.3/targets/x86/64/openwrt-sdk-24.10.3-x86-64_gcc-13.3.0_musl.Linux-x86_64.tar.zst"
           
           echo "Downloading SDK..."
-          wget -q $SDK_URL -O sdk.tar.xz
-          mkdir sdk && tar -xJf sdk.tar.xz -C sdk --strip-components=1
+          # 1. 保存为对应的 .tar.zst 后缀
+          wget -q $SDK_URL -O sdk.tar.zst
+          
+          # 2. 创建目录并使用 --zstd 参数解压
+          mkdir sdk
+          tar --zstd -xf sdk.tar.zst -C sdk --strip-components=1
 
       - name: Compile rp-pppoe-relay
         run: |
