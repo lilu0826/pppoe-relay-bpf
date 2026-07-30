@@ -1,0 +1,47 @@
+name: Build rp-pppoe-relay
+
+on:
+  workflow_dispatch: # 支持手动点击按钮触发
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup OpenWrt SDK
+        run: |
+          # 1. 下载对应你路由器系统版本和架构的 SDK 
+          # 注意：请根据你路由器的实际版本和架构修改下面这个 URL ！！
+          # 示例使用：x86_64 / OpenWrt 23.05.2
+          SDK_URL="https://downloads.openwrt.org/releases/24.10.3/targets/x86/64/openwrt-sdk-24.10.3-x86-64_gcc-13.3.0_musl.Linux-x86_64.tar.zst"
+          
+          echo "Downloading SDK..."
+          wget -q $SDK_URL -O sdk.tar.xz
+          mkdir sdk && tar -xJf sdk.tar.xz -C sdk --strip-components=1
+
+      - name: Compile rp-pppoe-relay
+        run: |
+          cd sdk
+          # 更新并安装官方 feeds
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          
+          # 手动在 .config 中开启 rp-pppoe-relay 的编译开关 (=m 表示编译为独立包)
+          echo "CONFIG_PACKAGE_rp-pppoe-relay=m" >> .config
+          echo "CONFIG_PACKAGE_rp-pppoe-common=m" >> .config
+          
+          # 自动补全依赖项
+          make defconfig
+          
+          # 单独编译 rp-pppoe 相关的包
+          make package/feeds/packages/rp-pppoe/compile V=s -j$(nproc)
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: rp-pppoe-relay-packages
+          # 收集编译出来的 ipk 目录
+          path: sdk/bin/packages/*/packages/rp-pppoe-relay*
