@@ -24,6 +24,7 @@ static struct pppoe_fastpath_bpf *obj;
 static struct bpf_link *links[MAX_INTERFACES];
 static const PPPoEInterface *interfaces;
 static unsigned int indices[MAX_INTERFACES];
+static int carrier_seen[MAX_INTERFACES];
 static int count, debug_log, foreground_log, cpus;
 static int ioctl_fd = -1, route_fd = -1;
 static unsigned int generation;
@@ -122,11 +123,16 @@ static int interface_matches(int n, int initializing)
     if (initializing) indices[n] = req.ifr_ifindex;
     else if (indices[n] != (unsigned int)req.ifr_ifindex) return 0;
     if (ioctl(ioctl_fd, SIOCGIFFLAGS, &req)) return 0;
-    if (!(req.ifr_flags & IFF_UP) || !(req.ifr_flags & IFF_RUNNING)) {
+    /* veth/bridge can be administratively UP while asynchronous linkwatch has
+     * not yet set IFF_RUNNING. Attach with empty maps during that startup window;
+     * after carrier has been observed, losing it invalidates old sessions. */
+    if (!(req.ifr_flags & IFF_UP) ||
+        (!initializing && carrier_seen[n] && !(req.ifr_flags & IFF_RUNNING))) {
         log_message(LOG_WARNING, "FASTPATH interface %s not running: flags=0x%x",
                     req.ifr_name, (unsigned short)req.ifr_flags);
         return 0;
     }
+    if (req.ifr_flags & IFF_RUNNING) carrier_seen[n] = 1;
     if (ioctl(ioctl_fd, SIOCGIFHWADDR, &req)) return 0;
     if (memcmp(req.ifr_hwaddr.sa_data, interfaces[n].mac, ETH_ALEN)) {
         log_message(LOG_WARNING, "FASTPATH interface %s MAC changed", req.ifr_name);
@@ -325,7 +331,9 @@ void fastpath_tick(PPPoESession *active, unsigned int epoch)
             for (i = 0; i < count; i++) {
                 if (indices[i] == (unsigned int)info->ifi_index &&
                     (h->nlmsg_type == RTM_DELLINK || !(info->ifi_flags & IFF_UP) ||
-                     !(info->ifi_flags & IFF_RUNNING))) invalid |= 1U << i;
+                     (carrier_seen[i] && !(info->ifi_flags & IFF_RUNNING)))) invalid |= 1U << i;
+                if (indices[i] == (unsigned int)info->ifi_index && (info->ifi_flags & IFF_RUNNING))
+                    carrier_seen[i] = 1;
             }
         }
     }

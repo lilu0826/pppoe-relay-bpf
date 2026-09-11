@@ -35,7 +35,11 @@ git -C "$repo_dir" archive HEAD src doc | tar -x -C "$package_dir/source"
 cp -p pppoe_fastpath.bpf.o pppoe_fastpath.skel.h "$package_dir/source/src/bpf/"
 
 cd sdk
-# SDK contains base recipes for libbpf/libelf/zlib. Never install official rp-pppoe.
+# SDK omits some base recipes. Install ONLY the matching release's library
+# recipes; relay still comes exclusively from this repository's git archive.
+printf '%s\n' 'src-git base https://github.com/openwrt/openwrt.git^66c462de62c2c49ef228a4fb0ea243340be0a2a7' > feeds.conf
+./scripts/feeds update base
+./scripts/feeds install -p base libbpf libelf zlib
 cat >> .config <<'CONFIG'
 CONFIG_PACKAGE_rp-pppoe-relay-fastpath=m
 CONFIG_PACKAGE_libbpf=m

@@ -37,7 +37,7 @@ define Build/Prepare
 endef
 
 define Build/Compile
-	+$(MAKE) $(PKG_JOBS) -C $(PKG_BUILD_DIR)/src \
+	+$(MAKE_VARS) $(MAKE) $(PKG_JOBS) -C $(PKG_BUILD_DIR)/src \
 		$(TARGET_CONFIGURE_OPTS) FASTPATH=1 \
 		PKG_CONFIG="$(STAGING_DIR_HOST)/bin/pkg-config" pppoe-relay
 endef
