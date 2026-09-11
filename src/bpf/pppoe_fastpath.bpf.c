@@ -108,10 +108,13 @@ int pppoe_fastpath(struct __sk_buff *skb)
         __builtin_memcmp(eth.h_dest, out.ingress_dst, ETH_ALEN))
         return TCX_NEXT;
 
-    /* From this point a failed write must DROP, never pass a partially
-     * rewritten frame to the userspace fallback. */
-    if (skb->len > frame_len && bpf_skb_change_tail(skb, frame_len, 0))
-        goto write_error;
+    /* change_tail can reject inherited transport/encapsulation metadata.
+     * It has not changed frame bytes on failure: keep the original slow path.
+     * Once a header write starts, failures must DROP a partially changed frame. */
+    if (skb->len > frame_len && bpf_skb_change_tail(skb, frame_len, 0)) {
+        if (total) total->misses++;
+        return TCX_NEXT;
+    }
     __builtin_memcpy(eth.h_source, out.src_mac, ETH_ALEN);
     __builtin_memcpy(eth.h_dest, out.dst_mac, ETH_ALEN);
     if (bpf_skb_store_bytes(skb, 0, &eth, sizeof(eth), 0) ||

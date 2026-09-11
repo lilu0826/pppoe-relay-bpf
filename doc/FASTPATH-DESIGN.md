@@ -76,7 +76,8 @@ SID 在帧和 map 内均为网络字节序；仅日志及数组槽位用 `ntohs(
    monotonic last_seen；每秒汇总活跃 session 并刷新 epoch。处理 SIGALRM 中断时也维护，避免心跳饿死。
    读取失败时回退，并给曾加速会话一个完整 idle interval 恢复用户态活动。
 4. **padding 是原转发语义的一部分。** 内核按声明的 PPPoE length 去掉尾部 padding。
-   修改后 helper 若失败，丢弃该帧，不能把部分改写的帧交给 fallback。
+   去尾 padding 的 helper 若因 skb 元数据拒绝操作，在尚未修改帧时回退；
+   开始修改头部后 helper 若失败，丢弃该帧，不能把部分改写的帧交给 fallback。
 5. **TCX 替代手工 clsact。** TCX 仍是 TC ingress（非 XDP），需要 Linux 6.6+、libbpf 1.3+。
    使用未 pin 的 BPF link，SIGTERM/SIGINT 正常清理，SIGKILL 时 FD 关闭也由内核卸载；
    不创建/删除共享 qdisc。旧内核或权限不足直接回退。非命中返回 TCX_NEXT，保留后续 TC 程序和网络栈。

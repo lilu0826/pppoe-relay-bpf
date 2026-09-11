@@ -57,6 +57,27 @@ def tag(kind, data):
     return struct.pack("!HH", kind, len(data)) + data
 
 
+def ppp_payload(kind, serial):
+    data = b"FPTEST" + struct.pack("!I", serial) + bytes(range(48))
+    udp = struct.pack("!HHHH", 12345, 54321, 8 + len(data), 0) + data
+    if kind == 0:
+        header = struct.pack("!BBHHHBBH4s4s", 0x45, 0, 20 + len(udp), serial & 0xffff,
+                             0, 64, 17, 0, bytes([192, 0, 2, 1]), bytes([192, 0, 2, 2]))
+        total = sum(struct.unpack("!10H", header))
+        while total >> 16:
+            total = (total & 0xffff) + (total >> 16)
+        header = header[:10] + struct.pack("!H", (~total) & 0xffff) + header[12:]
+        return b"\x00\x21" + header + udp
+    if kind == 1:
+        # A syntactically valid IPv6 packet with No Next Header; relay treats
+        # all following bytes opaquely. This is not an IPv6 connectivity test.
+        header = struct.pack("!IHBB16s16s", 6 << 28, len(data), 59, 64,
+                             bytes.fromhex("20010db8000000000000000000000001"),
+                             bytes.fromhex("20010db8000000000000000000000002"))
+        return b"\x00\x57" + header + data
+    return b"\xc0\x21" + struct.pack("!BBHI", 9, serial & 0xff, 8 + len(data), 0) + data
+
+
 def receive(sock, predicate, timeout=3):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -156,7 +177,7 @@ class Lab:
                 pcap = self.result / f"{label}.pcap"
                 log = self.result / f"tcpdump-{label}.log"
                 output = log.open("w")
-                proc = subprocess.Popen(["ip", "netns", "exec", ns, "tcpdump", "-n", "-U", "-s", "0",
+                proc = subprocess.Popen(["ip", "netns", "exec", ns, "tcpdump", "--immediate-mode", "-n", "-U", "-s", "0",
                                          "-i", dev, "-Q", "in", "-w", str(pcap)],
                                         stdout=output, stderr=output, env={**os.environ, "LC_ALL": "C"})
                 self.captures.append((proc, output, pcap))
@@ -236,17 +257,17 @@ class Lab:
             expected = []
             for i in range(amount):
                 self.serial += 1
-                # Opaque PPP payload: IPv4/IPv6/LCP + arbitrary bytes. These tests
-                # verify forwarding, not a negotiated IP/TCP network stack.
-                payload = (b"\x00\x21", b"\x00\x57", b"\xc0\x21")[i % 3]
-                payload += b"FPTEST" + struct.pack("!I", self.serial) + bytes(range(48))
+                payload = ppp_payload(i % 3, self.serial)
                 original = frame(dst, src, SESS, 0, in_sid, payload)
                 output = frame(outdst, outsrc, SESS, 0, out_sid, payload)
                 expected.append(output)
                 self.expected_pcaps[output] += 1
                 send_sock.send(original + b"\0" * 16)  # upstream trims frame padding
             got = [p for p in collect(recv_sock, 0.4) if b"FPTEST" in p]
-            assert collections.Counter(got) == collections.Counter(expected), "lost, duplicate or wrong rewrite"
+            assert collections.Counter(got) == collections.Counter(expected), (
+                f"lost, duplicate or wrong rewrite: got={len(got)} expected={len(expected)} "
+                f"missing={[p.hex() for p in (collections.Counter(expected) - collections.Counter(got))][:2]} "
+                f"extra={[p.hex() for p in (collections.Counter(got) - collections.Counter(expected))][:2]}")
             observed = [p for p in collect(observer, 0.05) if b"FPTEST" in p]
             assert len(observed) == (0 if accelerated else amount), "wrong userspace socket delivery"
             outputs += got
