@@ -1,0 +1,258 @@
+# @configure_input@
+#***********************************************************************
+#
+# Makefile
+#
+# Makefile for Roaring Penguin's Linux user-space PPPoE client.
+#
+# Copyright (C) 2000 Roaring Penguin Software Inc.
+# Copyright (C) 2018-2023 Dianne Skoll
+#
+# This program may be distributed according to the terms of the GNU
+# General Public License, version 2 or (at your option) any later version.
+#
+# SPDX-License-Identifier: GPL-2.0-or-later
+#
+# $Id$
+#***********************************************************************
+
+# Version is set ONLY IN THE MAKEFILE!  Don't delete this!
+RP_VERSION=4.0
+
+DEFINES=
+prefix=@prefix@
+exec_prefix=@exec_prefix@
+mandir=@mandir@
+docdir=@prefix@/share/doc/rp-pppoe-$(RP_VERSION)
+install=@INSTALL@
+install_dir=@INSTALL@ -d
+sbindir=@sbindir@
+datarootdir=@datarootdir@
+
+# Plugin for pppd on Linux
+LINUX_KERNELMODE_PLUGIN=@LINUX_KERNELMODE_PLUGIN@
+PPPD_INCDIR=@PPPD_INCDIR@
+
+# PPPoE relay -- currently only supported on Linux
+PPPOE_RELAY=@PPPOE_RELAY@
+
+# Program paths
+PPPOE_PATH=$(sbindir)/pppoe
+PPPD_PATH=@PPPD@
+
+# Kernel-mode plugin gets installed here.
+PLUGIN_DIR=/etc/ppp/plugins
+PLUGIN_PATH=$(PLUGIN_DIR)/rp-pppoe.so
+
+# Configuration file paths
+PPPOESERVER_PPPD_OPTIONS=/etc/ppp/pppoe-server-options
+
+PATHS='-DPPPOE_PATH="$(PPPOE_PATH)"' '-DPPPD_PATH="$(PPPD_PATH)"' \
+	'-DPLUGIN_PATH="$(PLUGIN_PATH)"' \
+	'-DPPPOE_SERVER_OPTIONS="$(PPPOESERVER_PPPD_OPTIONS)"'
+
+CFLAGS= @CFLAGS@ $(DEFINES) $(PATHS) -Ilibevent
+TARGETS=@TARGETS@
+LDFLAGS=@LDFLAGS@
+STATIC=@STATIC@
+FASTPATH ?= 0
+CLANG ?= clang
+BPFTOOL ?= bpftool
+PKG_CONFIG ?= pkg-config
+BPF_CFLAGS ?= -O2 -g -Wall -Werror -target bpf -I/usr/include/$(shell @CC@ -dumpmachine)
+ifeq ($(FASTPATH),1)
+FASTPATH_OBJ=fastpath.o
+FASTPATH_LIBS=$(shell $(PKG_CONFIG) --libs libbpf)
+else
+FASTPATH_OBJ=fastpath_stub.o
+FASTPATH_LIBS=
+endif
+all: $(TARGETS)
+	@echo ""
+	@echo "Type 'make install' as root to install the software."
+
+pppoe-sniff: pppoe-sniff.o if.o common.o debug.o
+	@CC@ -o $@ $^ $(LDFLAGS) $(STATIC)
+
+pppoe-server: pppoe-server.o if.o debug.o common.o md5.o control_socket.o libevent/libevent.a @PPPOE_SERVER_DEPS@
+	@CC@ -o $@ @RDYNAMIC@ $^ $(LDFLAGS) -Llibevent -levent $(STATIC)
+
+pppoe: pppoe.o if.o debug.o common.o ppp.o discovery.o
+	@CC@ -o $@ $^ $(LDFLAGS) $(STATIC)
+
+pppoe-relay: relay.o if.o debug.o common.o $(FASTPATH_OBJ) FORCE_RELAY_LINK
+	@CC@ -o $@ $(filter-out FORCE_RELAY_LINK,$^) $(LDFLAGS) $(FASTPATH_LIBS) $(STATIC)
+
+fastpath_stub.o: fastpath_stub.c fastpath.h
+	@CC@ $(CFLAGS) -c -o $@ $<
+
+fastpath.o: fastpath.c fastpath.h relay.h bpf/fastpath_shared.h bpf/pppoe_fastpath.skel.h
+	$(PKG_CONFIG) --atleast-version=1.3.0 libbpf
+	@CC@ $(CFLAGS) $(shell $(PKG_CONFIG) --cflags libbpf) -c -o $@ $<
+
+bpf/pppoe_fastpath.bpf.o: bpf/pppoe_fastpath.bpf.c bpf/fastpath_shared.h
+	$(CLANG) $(BPF_CFLAGS) $(shell $(PKG_CONFIG) --cflags libbpf) -c $< -o $@
+
+bpf/pppoe_fastpath.skel.h: bpf/pppoe_fastpath.bpf.o
+	$(BPFTOOL) gen skeleton $< > $@.tmp
+	mv $@.tmp $@
+
+FORCE_RELAY_LINK:
+.PHONY: FORCE_RELAY_LINK
+
+pppoe.o: pppoe.c pppoe.h
+	@CC@ $(CFLAGS) '-DRP_VERSION="$(RP_VERSION)"' -c -o $@ $<
+
+discovery.o: discovery.c pppoe.h
+	@CC@ $(CFLAGS) '-DRP_VERSION="$(RP_VERSION)"' -c -o $@ $<
+
+ppp.o: ppp.c pppoe.h
+	@CC@ $(CFLAGS) '-DRP_VERSION="$(RP_VERSION)"' -c -o $@ $<
+
+control_socket.o: control_socket.c control_socket.h libevent/event_tcp.h pppoe.h
+	@CC@ $(CFLAGS) '-DRP_VERSION="$(RP_VERSION)"' -c -o $@ $<
+
+md5.o: md5.c md5.h
+	@CC@ $(CFLAGS) '-DRP_VERSION="$(RP_VERSION)"' -c -o $@ $<
+
+pppoe-server.o: pppoe-server.c pppoe.h @PPPOE_SERVER_DEPS@
+	@CC@ $(CFLAGS) '-DRP_VERSION="$(RP_VERSION)"' -c -o $@ $<
+
+pppoe-sniff.o: pppoe-sniff.c pppoe.h
+	@CC@ $(CFLAGS) '-DRP_VERSION="$(RP_VERSION)"' -c -o $@ $<
+
+if.o: if.c pppoe.h
+	@CC@ $(CFLAGS) '-DRP_VERSION="$(RP_VERSION)"' -c -o $@ $<
+
+libevent/libevent.a:
+	cd libevent && $(MAKE) DEFINES="$(DEFINES)"
+
+common.o: common.c pppoe.h
+	@CC@ $(CFLAGS) '-DRP_VERSION="$(RP_VERSION)"' -c -o $@ $<
+
+debug.o: debug.c pppoe.h
+	@CC@ $(CFLAGS) '-DRP_VERSION="$(RP_VERSION)"' -c -o $@ $<
+
+relay.o: relay.c relay.h pppoe.h fastpath.h
+	@CC@ $(CFLAGS) '-DRP_VERSION="$(RP_VERSION)"' -c -o $@ $<
+
+# Experimental code from Savoir Faire Linux.  I do not consider it
+# production-ready, so not part of the official distribution.
+#modem.o: modem.c modem.h
+#	@CC@ $(CFLAGS) '-DRP_VERSION="$(RP_VERSION)"' -c -o $@ $<
+
+#rs232.o: rs232.c rs232.h
+#	@CC@ $(CFLAGS) '-DRP_VERSION="$(RP_VERSION)"' -c -o $@ $<
+
+
+# Linux-specific plugin
+rp-pppoe.so: plugin/plugin.o plugin/libplugin.a
+	@CC@ -o $@ -shared $^ $(LDFLAGS)
+
+plugin/plugin.o: plugin.c
+	@CC@ -DPLUGIN=1 '-DRP_VERSION="$(RP_VERSION)"' $(CFLAGS) -I$(PPPD_INCDIR) -c -o $@ -fPIC $<
+
+plugin/libplugin.a: plugin/discovery.o plugin/if.o plugin/common.o plugin/debug.o
+	@AR@ -rc $@ $^
+
+plugin/discovery.o: discovery.c
+	@CC@ -DPLUGIN=1 $(CFLAGS) '-DRP_VERSION="$(RP_VERSION)"' -I$(PPPD_INCDIR) -c -o $@ -fPIC $<
+
+plugin/if.o: if.c
+	@CC@ -DPLUGIN=1 $(CFLAGS) '-DRP_VERSION="$(RP_VERSION)"' -I$(PPPD_INCDIR) -c -o $@ -fPIC $<
+
+plugin/debug.o: debug.c
+	@CC@ -DPLUGIN=1 $(CFLAGS) '-DRP_VERSION="$(RP_VERSION)"' -I$(PPPD_INCDIR) -c -o $@ -fPIC $<
+
+plugin/common.o: common.c
+	@CC@ -DPLUGIN=1 $(CFLAGS) '-DRP_VERSION="$(RP_VERSION)"' -I$(PPPD_INCDIR) -c -o $@ -fPIC $<
+
+install: all
+	-mkdir -p $(DESTDIR)$(sbindir)
+	$(install) -m 755 pppoe $(DESTDIR)$(sbindir)
+	$(install) -m 755 pppoe-server $(DESTDIR)$(sbindir)
+	if test -x pppoe-relay ; then $(install) -m 755 pppoe-relay $(DESTDIR)$(sbindir); fi
+	if test -x pppoe-sniff; then $(install) -m 755 pppoe-sniff $(DESTDIR)$(sbindir); fi
+	-mkdir -p $(DESTDIR)$(docdir)
+	$(install) -m 644 ../doc/CHANGES $(DESTDIR)$(docdir)
+	$(install) -m 644 ../doc/KERNEL-MODE-PPPOE $(DESTDIR)$(docdir)
+	$(install) -m 644 ../doc/HOW-TO-CONNECT $(DESTDIR)$(docdir)
+	$(install) -m 644 ../doc/LICENSE $(DESTDIR)$(docdir)
+	$(install) -m 644 ../README.md $(DESTDIR)$(docdir)
+	-mkdir -p $(DESTDIR)$(mandir)/man8
+	for i in $(TARGETS) ; do \
+		if test -f ../man/$$i.8 ; then \
+			$(install) -m 644 ../man/$$i.8 $(DESTDIR)$(mandir)/man8 || exit 1; \
+		fi; \
+	done
+	-mkdir -p $(DESTDIR)/etc/ppp
+	-mkdir -p $(DESTDIR)$(PLUGIN_DIR)
+	-echo "# Directory created by rp-pppoe for kernel-mode plugin" > $(DESTDIR)$(PLUGIN_DIR)/README
+	if test -r rp-pppoe.so; then $(install) -m 755 rp-pppoe.so $(DESTDIR)$(PLUGIN_DIR); fi
+	@if [ ! -f $(DESTDIR)$(PPPOESERVER_PPPD_OPTIONS) ] ; then \
+		$(install) -m 644 ../configs/pppoe-server-options $(DESTDIR)$(PPPOESERVER_PPPD_OPTIONS) ; \
+	else \
+		echo "NOT overwriting existing $(DESTDIR)$(PPPOESERVER_PPPD_OPTIONS)"; \
+		$(install) -m 644 ../configs/pppoe-server-options $(DESTDIR)$(PPPOESERVER_PPPD_OPTIONS)-example ; \
+	fi
+
+tgz: distro
+	cd .. && tar cvf rp-pppoe-$(RP_VERSION)$(BETA).tar rp-pppoe-$(RP_VERSION)$(BETA)
+	gzip -f -v -9 ../rp-pppoe-$(RP_VERSION)$(BETA).tar
+	rm -rf ../rp-pppoe-$(RP_VERSION)$(BETA)
+
+distro:
+	rm -rf ../rp-pppoe-$(RP_VERSION)$(BETA)
+	mkdir ../rp-pppoe-$(RP_VERSION)$(BETA)
+	mkdir ../rp-pppoe-$(RP_VERSION)$(BETA)/configs
+	cp ../README.md ../rp-pppoe-$(RP_VERSION)$(BETA)
+	for i in pppoe-server-options ; do \
+		cp ../configs/$$i ../rp-pppoe-$(RP_VERSION)$(BETA)/configs || exit 1; \
+	done
+	mkdir ../rp-pppoe-$(RP_VERSION)$(BETA)/doc
+	for i in CHANGES KERNEL-MODE-PPPOE HOW-TO-CONNECT LICENSE ; do \
+		cp ../doc/$$i ../rp-pppoe-$(RP_VERSION)$(BETA)/doc || exit 1; \
+	done
+	mkdir ../rp-pppoe-$(RP_VERSION)$(BETA)/man
+	for i in pppoe-server.8 pppoe-sniff.8 pppoe.8 pppoe-relay.8 ; do \
+		cp ../man/$$i ../rp-pppoe-$(RP_VERSION)$(BETA)/man || exit 1; \
+	done
+	mkdir ../rp-pppoe-$(RP_VERSION)$(BETA)/scripts
+	mkdir ../rp-pppoe-$(RP_VERSION)$(BETA)/src
+	for i in Makefile.in install-sh common.c config.h.in configure configure.ac debug.c discovery.c if.c md5.c md5.h ppp.c pppoe-server.c pppoe-sniff.c pppoe.c pppoe.h pppoe-server.h plugin.c relay.c relay.h control_socket.c control_socket.h ; do \
+		cp ../src/$$i ../rp-pppoe-$(RP_VERSION)$(BETA)/src || exit 1; \
+	done
+	mkdir ../rp-pppoe-$(RP_VERSION)$(BETA)/src/libevent
+	for i in Makefile.in event.c event.h event_tcp.c event_tcp.h eventpriv.h hash.c hash.h event_sig.c ; do \
+		cp ../src/libevent/$$i ../rp-pppoe-$(RP_VERSION)$(BETA)/src/libevent || exit 1; \
+	done
+	mkdir ../rp-pppoe-$(RP_VERSION)$(BETA)/src/plugin
+
+distro-beta: beta-check
+	$(MAKE) distro BETA=-BETA-$(BETA)
+
+tgz-beta: beta-check
+	$(MAKE) tgz BETA=-BETA-$(BETA)
+
+beta-check:
+	@if test "$(BETA)" = "" ; then \
+		echo "Usage: make distro-beta BETA=<x>"; \
+		exit 1; \
+	fi
+
+clean:
+	rm -f bpf/*.bpf.o bpf/*.skel.h bpf/*.skel.h.tmp
+	rm -f *.o pppoe-relay pppoe pppoe-sniff pppoe-server core rp-pppoe.so plugin/*.o plugin/libplugin.a *~
+	test -f libevent/Makefile && $(MAKE) -C libevent clean || true
+
+distclean: clean
+	rm -f Makefile config.h config.cache config.log config.status
+	rm -f libevent/Makefile
+	rm -f 	libevent/Doc/libevent.aux libevent/Doc/libevent.log libevent/Doc/libevent.out libevent/Doc/libevent.pdf	tests/testevent	tests/testevent.o
+	rm -rf autom4te.cache
+
+.PHONY: clean
+
+.PHONY: distclean
+
+.PHONY: distro

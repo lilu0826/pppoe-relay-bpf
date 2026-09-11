@@ -1,0 +1,31 @@
+/* config.h.in.  Generated automatically from configure.in by autoheader.  */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+
+#undef HAVE_STRUCT_SOCKADDR_LL
+
+/* Define if you have kernel-mode PPPoE in Linux file.  */
+#undef HAVE_LINUX_KERNEL_PPPOE
+
+/* Define if you have the <linux/if_packet.h> header file.  */
+#undef HAVE_LINUX_IF_PACKET_H
+
+/* Define if you have the <linux/if_pppox.h> header file.  */
+#undef HAVE_LINUX_IF_PPPOX_H
+
+/* Define if you have the <net/if_arp.h> header file.  */
+#undef HAVE_NET_IF_ARP_H
+
+/* Define if you have the <net/ethernet.h> header file.  */
+#undef HAVE_NET_ETHERNET_H
+
+/* Define if you have the <linux/if.h> header file.  */
+#undef HAVE_LINUX_IF_H
+
+/* Define if you have the <sys/uio.h> header file.  */
+#undef HAVE_SYS_UIO_H
+
+/* Define if you have the N_HDLC line discipline in pty.h */
+#undef HAVE_N_HDLC
+
+/* Define to include debugging code */
+#undef DEBUGGING_ENABLED

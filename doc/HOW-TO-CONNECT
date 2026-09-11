@@ -1,0 +1,91 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+This package lets you connect a Linux machine to an ISP that uses PPPoE.
+PPPoE is used by many DSL providers and some wireless providers.
+
+Follow these steps and you should have your PPPoE service up and running.
+
+0. Install the rp-pppoe-software
+--------------------------------
+
+You should have already done this by the time you're reading this.  If not,
+go back and read README.
+
+1. Set up your Ethernet hardware
+--------------------------------
+
+First, make sure the Ethernet card you intend to use with the modem is
+visible to the Linux kernel.  Just how to do this is beyond the scope
+of this document.  However, if the card is the only Ethernet card in
+the system, executing:
+
+	ip link show eth0
+
+should display something like this:
+
+	2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast qlen 1000
+    link/ether fc:aa:15:39:a7:b3 brd ff:ff:ff:ff:ff:ff
+
+Your second line will most definately be different.  As long as you see
+the link/ether line, your card should be working.
+
+2. Edit pap-secrets or chap-secrets
+-----------------------------------
+
+Edit the "pap-secrets" or "chap-secrets" file, inserting your proper
+user-ID and password.  Install the file (or copy the relevant lines)
+to /etc/ppp/pap-secrets.  Your ISP may use CHAP authentication.  In
+this case, add the line to /etc/ppp/chap-secrets.
+
+3. Create a PPP configuration file
+----------------------------------
+
+Create a file called /etc/ppp/peers/NAME where NAME is a convenient name
+for the connection.  If you are using user-mode PPPoE, the peer file
+should look something like this:
+
+    pty '/usr/sbin/pppoe -s -I eth0'
+    sync
+    noauth
+    remotename YOUR_ISP
+    name YOUR_USERNAME
+    noipdefault
+    nodetach
+    noaccomp
+    nodeflate
+    nopcomp
+    novj
+    novjccomp
+    lcp-echo-interval 10
+
+(Use the appropriate Ethernet interface name in place of eth0, if necessary.)
+
+If you are using kernel-mode PPPoE, the peer file should look something
+like this:
+
+    plugin /etc/ppp/plugins/rp-pppoe.so
+    nic-eth0
+    noauth
+    remotename YOUR_ISP
+    name YOUR_USERNAME
+    noipdefault
+    nodetach
+    noaccomp
+    nodeflate
+    nopcomp
+    novj
+    novjccomp
+    lcp-echo-interval 10
+
+Again, adjust nic-eth0 as appropriate for your Ethernet interface.  Always
+prefix the interface name with "nic-".
+
+Then to connect, simply invoke:
+
+     pppd call NAME
+
+where NAME is the name of the file you created under /etc/ppp/peers.
+
+--
+Dianne Skoll <dianne@skoll.ca>
+https://dianne.skoll.ca/projects/rp-pppoe/           |

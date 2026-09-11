@@ -1,51 +1,79 @@
-name: Build rp-pppoe-relay
+name: Build and test relay fastpath
 
 on:
-  workflow_dispatch: # 支持手动点击按钮触发
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
-  build:
-    runs-on: ubuntu-22.04
-
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Setup OpenWrt SDK
+      - uses: actions/checkout@v4
+      - name: Install Linux build and test tools
         run: |
-          # 1. 下载对应你路由器系统版本和架构的 SDK 
-          # 注意：请根据你路由器的实际版本和架构修改下面这个 URL ！！
-          # 示例使用：x86_64 / OpenWrt 23.05.2
-          SDK_URL="https://downloads.openwrt.org/releases/24.10.3/targets/x86/64/openwrt-sdk-24.10.3-x86-64_gcc-13.3.0_musl.Linux-x86_64.tar.zst"
-          
-          echo "Downloading SDK..."
-          # 1. 保存为对应的 .tar.zst 后缀
-          wget -q $SDK_URL -O sdk.tar.zst
-          
-          # 2. 创建目录并使用 --zstd 参数解压
-          mkdir sdk
-          tar --zstd -xf sdk.tar.zst -C sdk --strip-components=1
-
-      - name: Compile rp-pppoe-relay
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang llvm libbpf-dev libelf-dev zlib1g-dev \
+            pkg-config linux-tools-common linux-tools-generic iproute2 tcpdump ppp
+          tool=$(find /usr/lib -path '*/linux-tools*/*' -name bpftool -type f | sort -V | tail -1)
+          test -n "$tool"
+          sudo ln -sf "$tool" /usr/local/bin/bpftool
+      - name: Build original datapath and optional fastpath
         run: |
-          cd sdk
-          # 更新并安装官方 feeds
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
-          
-          # 手动在 .config 中开启 rp-pppoe-relay 的编译开关 (=m 表示编译为独立包)
-          echo "CONFIG_PACKAGE_rp-pppoe-relay=m" >> .config
-          echo "CONFIG_PACKAGE_rp-pppoe-common=m" >> .config
-          
-          # 自动补全依赖项
-          make defconfig
-          
-          # 单独编译 rp-pppoe 相关的包
-          make package/feeds/packages/rp-pppoe/compile V=s -j$(nproc)
-
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
+          mkdir -p artifacts/linux
+          cd src
+          sh configure --disable-plugin
+          make -j2 FASTPATH=0 pppoe-relay
+          cp pppoe-relay ../artifacts/linux/pppoe-relay-userspace
+          make -j2 FASTPATH=1 pppoe-relay
+          cp pppoe-relay ../artifacts/linux/pppoe-relay
+          ./pppoe-relay -h
+          make -C ../tests
+      - name: Verify BPF independently of relay control plane
+        run: sudo tests/test_bpf
+      - name: Real namespace tests and tcpdump duplicate checks
+        run: |
+          sudo python3 tests/netns.py --binary src/pppoe-relay \
+            --stub-binary artifacts/linux/pppoe-relay-userspace --idle-test
+      - name: Record build provenance
+        if: always()
+        run: |
+          mkdir -p artifacts/linux
+          git rev-parse HEAD > artifacts/linux/SOURCE_COMMIT
+          uname -a > artifacts/linux/RUNNER_KERNEL
+          cp README.md artifacts/linux/
+      - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: rp-pppoe-relay-packages
-          # 收集编译出来的 ipk 目录
-          path: sdk/bin/packages/*/packages/rp-pppoe-relay*
+          name: linux-x86_64-relay-and-test-evidence
+          path: |
+            artifacts/linux/
+            test-results/
+          if-no-files-found: error
+
+  openwrt:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SDK and host BPF tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang llvm libbpf-dev libelf-dev zlib1g-dev \
+            pkg-config linux-tools-common linux-tools-generic gawk gettext libncurses-dev \
+            python3 rsync unzip zstd file wget curl
+          tool=$(find /usr/lib -path '*/linux-tools*/*' -name bpftool -type f | sort -V | tail -1)
+          test -n "$tool"
+          sudo ln -sf "$tool" /usr/local/bin/bpftool
+      - name: Build this repository with OpenWrt 24.10.3 x86_64 SDK
+        run: bash scripts/build-openwrt.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-24.10.3-x86_64-relay-fastpath-ipk
+          path: artifacts/openwrt/
+          if-no-files-found: error

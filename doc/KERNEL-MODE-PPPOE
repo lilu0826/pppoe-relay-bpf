@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+RP-PPPoE now supports kernel-mode PPPoE on Linux kernels 2.4 or newer.
+
+Here's what you need to do:
+
+1) If you are running pppd older than 2.4.0, upgrade to the newest version.
+Make sure you have the pppd development files installed.
+
+2) Unpack rp-pppoe.
+
+3) In the rp-pppoe directory, change to src/ and type:
+
+	./configure --enable-plugin
+
+4) Type make; make install
+
+5) Use the "plugin /etc/ppp/plugins/rp-pppoe.so" pppd option.
+
+The rp-pppoe.so plugin adds the following command-line options to pppd:
+
+ethXXX                          -- Use interface ethXXX as Ethernet interface
+brXXX                           -- Use interface brXXX as Ethernet interface
+nic-XXXX                        -- Use interface XXXX as the Ethernet interface
+
+rp_pppoe_service SERVICE_NAME   -- Specify desired service name
+rp_pppoe_ac NAME                -- Specify desired access concentrator name
+rp_pppoe_verbose 0|1            -- Print names of access concentrators
+
+rp_pppoe_sess nnnn:aa:bb:cc:dd:ee:ff -- Attach to existing session 'nnnn'
+                                on AC with Ethernet address aa:bb:cc:dd:ee:ff
+                                This skips the discovery phase.
+
+rp_pppoe_mac aa:bb:cc:dd:ee:ff -- only accept PADOs from specified MAC address
+
+The kernel-mode PPPoE plugin permits an MTU of up to 1500 on the PPP
+interface providing that the MTU on the underlying Ethernet interface
+is at least 1508.
+
+--
+Dianne Skoll <dianne@skoll.ca>
+

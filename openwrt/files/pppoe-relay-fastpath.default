@@ -1,0 +1,6 @@
+# Leave empty until the actual relay interfaces are configured.
+OPTIONS=""
+# Original userspace datapath:
+# OPTIONS="-S eth1 -C br-lan"
+# Optional TC/eBPF datapath:
+# OPTIONS="-S eth1 -C br-lan --fastpath"
