@@ -7,6 +7,7 @@ session output checks and tcpdump PCAP duplicate checks. No ISP/pppd required.
 import argparse
 import collections
 import contextlib
+import errno
 import json
 import os
 from pathlib import Path
@@ -406,6 +407,10 @@ def main():
         lab.ip(lab.r, "link", "set", lab.wan, "down")
         wait_log(lab.log, "FASTPATH FALLBACK: interface", lab.proc)
         lab.ip(lab.r, "link", "set", lab.wan, "up")
+        # AF_PACKET retains the one-shot NETDEV_DOWN error even after link-up.
+        # Consume that notification on the test observer before checking data.
+        pending = lab.wan_observer.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)
+        assert pending in (0, errno.ENETDOWN), f"unexpected socket error {pending}"
         lab.no_forward(sid)
         sid = lab.discovery(acsid=0x7777)
         lab.burst(sid, acsid=0x7777, accelerated=False)
