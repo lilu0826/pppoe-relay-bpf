@@ -29,6 +29,8 @@ TCX 不支持、BPF 权限不足、tcpdump 启动失败均为测试失败，不�
 覆盖 veth、bridge master、802.1Q/802.1ad 逻辑 VLAN、两 BRAS 相同 SID、双向数据、
 重复 PADS、未知 SID/错误 MAC、PADT、重拨、SIGTERM/SIGINT/SIGKILL、权限失败、无 BPF 构建、
 接口 down/up、活跃会话不被 timeout 误删和空闲会话最终发 PADT。
+另外只定位测试 relay 持有的 map FD，使用 freeze 和填满容量制造首次写入失败、
+第二方向写入失败及删除前 deactivation 失败，验证真实错误路径能完整回退。
 
 测试里的 PPP payload 是不透明的 IPv4/IPv6/LCP 字节，**没有进行 pppd 的认证、IPCP、IPv6CP、
 真实 TCP/UDP/ping 或运营商拨号**。这些属于下一节现场验收。

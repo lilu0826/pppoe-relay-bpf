@@ -168,6 +168,8 @@ class Lab:
             if mode in ("fastpath", "failure", "stub"):
                 args += ["--fastpath-debug"]
             self.logfile = self.log.open("w")
+            # Save the kernel's link state next to the relay diagnostics.
+            (self.result / "links.json").write_text(self.ip(self.r, "-j", "-d", "link", "show").stdout)
             self.proc = subprocess.Popen(args, stdout=self.logfile, stderr=self.logfile)
             if mode == "fastpath":
                 wait_log(self.log, "Fastpath: TC/eBPF enabled", self.proc)
@@ -275,6 +277,19 @@ class Lab:
         observed = [p for p in collect(self.lan_observer) if b"NEGATIVE" in p]
         assert len(observed) == 1, "TC program still consumes frames after exit"
 
+    def owned_map(self, name):
+        # Never select a map globally by name: only FDs owned by this lab's relay.
+        for path in Path(f"/proc/{self.proc.pid}/fdinfo").iterdir():
+            for line in path.read_text().splitlines():
+                if line.startswith("map_id:"):
+                    ident = int(line.split()[1])
+                    info = json.loads(command("bpftool", "-j", "map", "show", "id", ident).stdout)
+                    if isinstance(info, list):
+                        info = info[0]
+                    if info["name"] == name:
+                        return ident, info
+        raise AssertionError(f"relay does not own map {name}")
+
     def close(self):
         if self.proc and self.proc.poll() is None:
             self.proc.terminate()
@@ -376,6 +391,34 @@ def main():
     lab.check_pcaps()
     checks.append("link down: retire affected sessions, detach, redial via fallback")
     print("PASS", checks[-1], flush=True)
+    for fault in ("first-update", "second-update", "deactivation"):
+        lab = Lab("veth", args.binary.resolve(), "fastpath", results / fault)
+        with contextlib.closing(lab):
+            sid = lab.discovery()
+            lab.burst(sid)
+            ident, info = lab.owned_map("states" if fault == "deactivation" else "sessions")
+            if fault == "second-update":
+                # One session occupies two entries. Leave exactly one free:
+                # first direction succeeds; second fails with a real full map.
+                for i in range(info["max_entries"] - 3):
+                    key = struct.pack("=I", 0) + struct.pack("!H", i + 1) + bytes(10)
+                    command("bpftool", "map", "update", "id", ident, "key", "hex",
+                            *key.hex(" ").split(), "value", "hex", *bytes(32).hex(" ").split())
+            else:
+                command("bpftool", "map", "freeze", "id", ident)
+            if fault == "deactivation":
+                lab.padt(sid)
+                wait_log(lab.log, "FASTPATH FALLBACK: session deactivation", lab.proc)
+                sid = lab.discovery(acsid=0x7777)
+                lab.burst(sid, acsid=0x7777, accelerated=False)
+            else:
+                sid2 = lab.discovery(AC2)
+                wait_log(lab.log, "FASTPATH FALLBACK: session map update", lab.proc)
+                lab.burst(sid2, AC2, accelerated=False)
+                lab.burst(sid, accelerated=False)
+        lab.check_pcaps()
+        checks.append(f"{fault}: actual map failure rolls back and preserves userspace forwarding")
+        print("PASS", checks[-1], flush=True)
     if args.idle_test:
         lab = Lab("veth", args.binary.resolve(), "fastpath", results / "idle", idle=2)
         with contextlib.closing(lab):

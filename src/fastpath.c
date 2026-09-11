@@ -112,14 +112,27 @@ static void fallback(const char *operation, int error)
 static int interface_matches(int n, int initializing)
 {
     struct ifreq req = {0};
-    strncpy(req.ifr_name, interfaces[n].name, IFNAMSIZ - 1);
-    if (ioctl(ioctl_fd, SIOCGIFINDEX, &req)) return 0;
+    size_t length = strnlen(interfaces[n].name, IFNAMSIZ);
+    if (length >= IFNAMSIZ) return 0;
+    memcpy(req.ifr_name, interfaces[n].name, length);
+    if (ioctl(ioctl_fd, SIOCGIFINDEX, &req)) {
+        log_message(LOG_WARNING, "FASTPATH interface %s index query: %s", req.ifr_name, strerror(errno));
+        return 0;
+    }
     if (initializing) indices[n] = req.ifr_ifindex;
     else if (indices[n] != (unsigned int)req.ifr_ifindex) return 0;
     if (ioctl(ioctl_fd, SIOCGIFFLAGS, &req)) return 0;
-    if (!(req.ifr_flags & IFF_UP) || !(req.ifr_flags & IFF_RUNNING)) return 0;
+    if (!(req.ifr_flags & IFF_UP) || !(req.ifr_flags & IFF_RUNNING)) {
+        log_message(LOG_WARNING, "FASTPATH interface %s not running: flags=0x%x",
+                    req.ifr_name, (unsigned short)req.ifr_flags);
+        return 0;
+    }
     if (ioctl(ioctl_fd, SIOCGIFHWADDR, &req)) return 0;
-    return !memcmp(req.ifr_hwaddr.sa_data, interfaces[n].mac, ETH_ALEN);
+    if (memcmp(req.ifr_hwaddr.sa_data, interfaces[n].mac, ETH_ALEN)) {
+        log_message(LOG_WARNING, "FASTPATH interface %s MAC changed", req.ifr_name);
+        return 0;
+    }
+    return 1;
 }
 
 static unsigned int interface_index(const PPPoEInterface *iface)
