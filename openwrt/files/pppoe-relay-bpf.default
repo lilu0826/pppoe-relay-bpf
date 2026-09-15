@@ -1,0 +1,4 @@
+# Configure interfaces before starting the service. Empty OPTIONS disables it.
+# Example: OPTIONS="-S eth1 -C br-lan"
+# Repeat -C/-S for additional ports; optional -n 5000 and --debug.
+OPTIONS=""

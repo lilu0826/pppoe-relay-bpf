@@ -1,4 +1,4 @@
-name: Build and test relay fastpath
+name: Build and test pppoe-relay-bpf
 
 on:
   push:
@@ -19,27 +19,18 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential clang llvm libbpf-dev libelf-dev zlib1g-dev \
-            pkg-config linux-tools-common linux-tools-generic iproute2 tcpdump ppp
+            pkg-config linux-tools-common linux-tools-generic iproute2 tcpdump
           tool=$(find /usr/lib -path '*/linux-tools*/*' -name bpftool -type f | sort -V | tail -1)
           test -n "$tool"
           sudo ln -sf "$tool" /usr/local/bin/bpftool
-      - name: Build original datapath and optional fastpath
+      - name: Build embedded BPF relay
         run: |
+          make -j2
+          src/pppoe-relay-bpf --help
           mkdir -p artifacts/linux
-          cd src
-          sh configure --disable-plugin
-          make -j2 FASTPATH=0 pppoe-relay
-          cp pppoe-relay ../artifacts/linux/pppoe-relay-userspace
-          make -j2 FASTPATH=1 pppoe-relay
-          cp pppoe-relay ../artifacts/linux/pppoe-relay
-          ./pppoe-relay -h
-          make -C ../tests
-      - name: Verify BPF independently of relay control plane
-        run: sudo tests/test_bpf
-      - name: Real namespace tests and tcpdump duplicate checks
-        run: |
-          sudo python3 tests/netns.py --binary src/pppoe-relay \
-            --stub-binary artifacts/linux/pppoe-relay-userspace --idle-test
+          cp src/pppoe-relay-bpf artifacts/linux/
+      - name: Discovery, sessions, local coexistence, capacity and lifecycle tests
+        run: sudo python3 tests/netns.py --binary src/pppoe-relay-bpf
       - name: Record build provenance
         if: always()
         run: |
@@ -47,10 +38,14 @@ jobs:
           git rev-parse HEAD > artifacts/linux/SOURCE_COMMIT
           uname -a > artifacts/linux/RUNNER_KERNEL
           cp README.md artifacts/linux/
+      - name: Include native relay guide
+        if: always()
+        run: |
+          cp doc/BPF-RELAY-QUICKSTART.md artifacts/linux/
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: linux-x86_64-relay-and-test-evidence
+          name: linux-x86_64-pppoe-relay-bpf
           path: |
             artifacts/linux/
             test-results/
@@ -58,7 +53,11 @@ jobs:
 
   openwrt:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        openwrt: ["24.10", "25.12"]
     steps:
       - uses: actions/checkout@v4
       - name: Install SDK and host BPF tools
@@ -70,10 +69,10 @@ jobs:
           tool=$(find /usr/lib -path '*/linux-tools*/*' -name bpftool -type f | sort -V | tail -1)
           test -n "$tool"
           sudo ln -sf "$tool" /usr/local/bin/bpftool
-      - name: Build this repository with OpenWrt 24.10.3 x86_64 SDK
-        run: bash scripts/build-openwrt.sh
+      - name: Build OpenWrt ${{ matrix.openwrt }} x86_64 package
+        run: bash scripts/build-openwrt.sh "${{ matrix.openwrt }}"
       - uses: actions/upload-artifact@v4
         with:
-          name: openwrt-24.10.3-x86_64-relay-fastpath-ipk
+          name: openwrt-${{ matrix.openwrt }}-x86_64-pppoe-relay-bpf
           path: artifacts/openwrt/
           if-no-files-found: error
